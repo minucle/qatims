@@ -1,4 +1,6 @@
 import io from 'socket.io';
+import socketValidation from '../validations/socket_validation';
+import Connections from './connections';
 
 /**
  * This class handles everything related to the TCP server.
@@ -22,22 +24,23 @@ class Server {
   private port: number;
 
   /**
-   * Server class constructor.
+   * Creates an instance of Server.
    *
-   * @param {number} port The server port.
+   * @param {number} [port] The server port.
    * @memberof Server
    * @constructor
    * @throws {Error} If the port is not valid.
    */
-  constructor(port: number) {
+  constructor(port?: number) {
     // Validate port
-    if (!parseInt(port + '') || port < 0) throw new Error('❌ Invalid port.');
+    if (port && (!parseInt(port + '') || port < 0))
+      throw new Error('❌ Invalid port.');
     port = port || 8080;
 
     this.port = port;
 
     // Create the socket.io server
-    this.io_server = new io.Server(this.port);
+    this.io_server = new io.Server();
   }
 
   /**
@@ -47,19 +50,72 @@ class Server {
    */
   private _onConnection(socket: io.Socket) {
     // Parse data from connection.
-    const { identifier } = socket.handshake.query;
+    const identifier = socket.handshake.query.identifier?.toString() || '';
     const address = socket.handshake.address;
+    const time_of_connection = Date.now();
 
     // Validate connection.
-    // TODO: IP Validation
-    // TODO: Identifier Validation (if valid, if has permission and if not connected. If not - ban IP and alert staff.)
+    if (!socketValidation(socket.id, identifier, address)) {
+      // TODO: log error
+      console.log(`❌ Invalid connection from ${address}`);
+
+      socket.disconnect();
+      return;
+    }
+
+    // Add connection to list.
+    Connections.addConnection(
+      socket.id,
+      identifier,
+      address,
+      time_of_connection
+    );
 
     // Log connection
     console.log(`📡 New connection: ${identifier}`);
     // TODO: Local logger
 
     // Handle disconnection and errors.
-    // TODO: Listen to disconnection and error events.
-    // TODO: Local logger
+    socket.on('disconnect', () => this._handleDisconnection(socket));
+    socket.on('error', (error) => this._handleDisconnection(socket, error));
+  }
+
+  /**
+   * Handles socket disconnection.
+   *
+   * @param {Socket} socket The socket that disconnected.
+   * @param {Error} [error] The error that caused the disconnection.
+   *
+   * @memberof Server
+   */
+  private _handleDisconnection(socket: io.Socket, error?: Error) {
+    // Log disconnection
+    console.log(`🚫 Disconnection: ${socket.id}`);
+
+    // Remove connection from list.
+    Connections.removeConnection(socket.id);
+
+    if (!error) return;
+    // TODO: log error
+  }
+
+  /**
+   * Starts the server.
+   *
+   * @param {void} [callback] The callback function.
+   *
+   * @memberof Server
+   */
+  public start(callback?: () => void) {
+    // Start the server
+    this.io_server.listen(this.port);
+
+    // Handle new connections
+    this.io_server.on('connection', this._onConnection.bind(this));
+
+    // Callback
+    if (callback) callback();
   }
 }
+
+export default Server;
